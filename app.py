@@ -390,21 +390,30 @@ F = (1.0 + g) ** horizon
 asset_gain_base = P_star * (F - 1.0)
 
 # Irrecuperáveis adicionais por ter pago acima do justo
-extra_irrec_diff = (irrec_mkt_m - irrec_fair_m) * months
+extra_irrec_month = (irrec_mkt_m - irrec_fair_m)
+
+r_op_m = (opp_return_pct / 100.0) / 12.0
+if r_op_m > 0:
+    ann_fv = ((1.0 + r_op_m) ** months - 1.0) / r_op_m
+else:
+    ann_fv = months  # sem capitalização
+
+extra_irrec_FV = extra_irrec_month * ann_fv
+
 # Se preferir ignorar "barganhas", use:
 # extra_irrec_diff = max(0.0, irrec_mkt_m - irrec_fair_m) * months
 
-net_user = asset_gain_base - extra_irrec_diff
+net_user = asset_gain_base - extra_irrec_FV
 
 # Breakeven (taxa mínima para empatar no teu critério)
 breakeven_g_text = "—"
 breakeven_T_text = "—"
 if P_star > 0:
-    g_star = (1.0 + (extra_irrec_diff / P_star)) ** (1.0 / horizon) - 1.0
+    g_star = (1.0 + (extra_irrec_FV / P_star)) ** (1.0 / horizon) - 1.0
     breakeven_g_text = f"{g_star*100:.2f}%"
     if g > 0:
         try:
-            T_star = math.log(1.0 + (extra_irrec_diff / P_star)) / math.log(1.0 + g)
+            T_star = math.log(1.0 + (extra_irrec_FV / P_star)) / math.log(1.0 + g)
             breakeven_T_text = f"{T_star:.1f} anos"
         except ValueError:
             pass
@@ -467,7 +476,7 @@ st.divider()
 # ---- UI clara (um veredito único) ----
 st.subheader("Resultado líquido vs alugar (critério final)")
 st.metric("Mais-valia do imóvel (base: preço justo)", f"{asset_gain_base:,.0f}".replace(",", " "))
-st.metric("Irrecuperáveis adicionais (mkt − justo, no horizonte)", f"{extra_irrec_diff:,.0f}".replace(",", " "))
+st.metric("Irrecuperáveis adicionais (mkt − justo, no horizonte)", f"{extra_irrec_FV:,.0f}".replace(",", " "))
 st.metric("g* para empatar", breakeven_g_text)
 st.metric("T* para empatar", breakeven_T_text)
 
