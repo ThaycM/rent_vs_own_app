@@ -466,14 +466,10 @@ st.divider()
 
 # ---- UI clara (um veredito único) ----
 st.subheader("Resultado líquido vs alugar (critério final)")
-c1, c2, c3 = st.columns(3)
-with c1:
-    st.metric("Mais-valia do imóvel (base: preço justo)", f"{asset_gain_base:,.0f}".replace(",", " "))
-with c2:
-    st.metric("Irrecuperáveis adicionais (mkt − justo, no horizonte)", f"{extra_irrec_diff:,.0f}".replace(",", " "))
-with c3:
-    st.metric("g* para empatar", breakeven_g_text)
-    st.metric("T* para empatar", breakeven_T_text)
+st.metric("Mais-valia do imóvel (base: preço justo)", f"{asset_gain_base:,.0f}".replace(",", " "))
+st.metric("Irrecuperáveis adicionais (mkt − justo, no horizonte)", f"{extra_irrec_diff:,.0f}".replace(",", " "))
+st.metric("g* para empatar", breakeven_g_text)
+st.metric("T* para empatar", breakeven_T_text)
 
 if net_user >= 0:
     st.success(
