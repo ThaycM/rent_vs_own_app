@@ -424,6 +424,7 @@ with cL:
 with cR:
     st.subheader("Preco justo para COMPRAR")
     st.metric("Preco maximo justo HOJE (EUR)", f"{P_star:,.0f}".replace(","," "))
+    st.metric("Preco de mercado hoje (EUR)", f"{P_market:,.0f}".replace(","," "))
     st.caption("Definicao: custo mensal medio de possuir = custo mensal medio de alugar (no horizonte).")
 
     st.write("**Decomposicao ao preco justo (mensal)**")
