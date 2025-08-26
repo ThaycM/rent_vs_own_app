@@ -316,6 +316,13 @@ def solve_price_pulp(
     const += float(buy_utils_month) + float(commute_buy_month) - float(commute_rent_month)
     const += float(upfront_outros) / float(months)
 
+    # custo minimo possivel (P=0) incluindo registos sem reducao total do regime jovem
+    registos_min = (upfront_registos * (1.0 - youth_share)) / float(months)
+    min_lhs = const + registos_min
+    if min_lhs > target_monthly_cost:
+        # mesmo pagando zero no imovel, os custos de comprar excedem o alvo de alugar
+        return 0.0
+
     if is_prazo_opt == ">=5y":
         credit_is_rate = 0.006
     elif is_prazo_opt == "1-5y":
@@ -376,6 +383,9 @@ P_star = solve_price_pulp(
     youth_share=youth_share,
     THRESH=THRESH,
 )
+
+if P_star <= 0.0:
+    st.error("Com o deslocamento informado, comprar fica sempre mais caro que alugar, mesmo pagando zero pelo imóvel.")
 
 own_tot_fair, br_fair = owning_monthly_total(P_star)
 own_tot_market, br_market = owning_monthly_total(P_market)
