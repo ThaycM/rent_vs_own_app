@@ -199,7 +199,9 @@ if abs(rent_app_rate) < 1e-12:
 else:
     r_m = (1.0 + rent_app_rate) ** (1.0/12.0)
     rent_avg_rent_component = rent_month * (r_m**months - 1.0) / ((r_m - 1.0) * months)
-rent_avg_total = rent_avg_rent_component + renter_ins_month + rent_utils_month + commute_rent
+# média de alugar sem o componente de deslocamento; o commute entra como diferença
+rent_avg_total_base = rent_avg_rent_component + renter_ins_month + rent_utils_month
+rent_avg_total = rent_avg_total_base + commute_rent
 
 # Preco de mercado
 P_market = buy_per_m2_market * area
@@ -297,6 +299,7 @@ def solve_price_pulp(
     sell_rate: float,
     buy_utils_month: float,
     commute_buy_month: float,
+    commute_rent_month: float,
     youth_share: float,
     THRESH: float,
     p_min: float = 10_000.0,
@@ -310,7 +313,7 @@ def solve_price_pulp(
     else:
         a += (imi_rate * float(vpt_ratio)) / 12.0
     const += float(condo_month) + float(ins_month)
-    const += float(buy_utils_month) + float(commute_buy_month)
+    const += float(buy_utils_month) + float(commute_buy_month) - float(commute_rent_month)
     const += float(upfront_outros) / float(months)
 
     if is_prazo_opt == ">=5y":
@@ -350,7 +353,8 @@ def solve_price_pulp(
 
 # ========= Resolver (P*) =========
 P_star = solve_price_pulp(
-    target_monthly_cost=rent_avg_total,   # media do custo de alugar
+    # usamos a media de alugar sem deslocamento; o commute entra como diferenca no solver
+    target_monthly_cost=rent_avg_total_base,
     months=months,
     cap_rate=cap_rate,
     maint_rate=maint_rate,
@@ -368,6 +372,7 @@ P_star = solve_price_pulp(
     sell_rate=sell_rate,
     buy_utils_month=buy_utils_month,
     commute_buy_month=commute_buy,
+    commute_rent_month=commute_rent,
     youth_share=youth_share,
     THRESH=THRESH,
 )
