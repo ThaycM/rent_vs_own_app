@@ -90,6 +90,11 @@ with c2:
 with c3:
     st.link_button("Alugar vs comprar: A regra dos 5%","https://www.youtube.com/watch?v=Uwl3-jBNEd4",icon="▶️")
 with st.sidebar:
+    st.header("0) Orcamento e taxa de esforco")
+    income_month = st.number_input("Renda do agregado (EUR/mes)", 0.0, value=3000.0, step=100.0)
+    effort_pct = st.number_input("Taxa de esforco maxima (%)", 0.0, value=30.0, step=1.0)
+
+    st.divider()
     st.header("1) Renda de referencia")
     area = st.number_input("Area util desejada (m2)", 10.0, value=120.0, step=1.0)
     rent_per_m2 = st.number_input("Renda media na regiao (EUR/m2/mes)", 1.0, value=8.5, step=0.1)
@@ -199,7 +204,9 @@ if abs(rent_app_rate) < 1e-12:
 else:
     r_m = (1.0 + rent_app_rate) ** (1.0/12.0)
     rent_avg_rent_component = rent_month * (r_m**months - 1.0) / ((r_m - 1.0) * months)
-rent_avg_total = rent_avg_rent_component + renter_ins_month + rent_utils_month + commute_rent
+# média de alugar sem o componente de deslocamento; o commute entra como diferença
+rent_avg_total_base = rent_avg_rent_component + renter_ins_month + rent_utils_month
+rent_avg_total = rent_avg_total_base + commute_rent
 
 # Preco de mercado
 P_market = buy_per_m2_market * area
@@ -227,28 +234,28 @@ STATE = dict(
     THRESH=THRESH,
 )
 
-def owning_monthly_total(price: float) -> tuple[float, dict]:
-    vpt = (STATE['vpt_ratio'] * price) if STATE['vpt_value'] is None else STATE['vpt_value']
-    loan = STATE['ltv'] * price
-    imt_total  = compute_imt(price, STATE['regime'], STATE['territorio'])
-    imt_thresh = compute_imt(min(price, STATE['THRESH']), STATE['regime'], STATE['territorio'])
-    imt_due = max(0.0, imt_total - STATE['youth_share'] * imt_thresh)
-    q = min(price, STATE['THRESH'])
-    is_compra = 0.008 * (price - STATE['youth_share'] * q)
-    is_credito = imposto_selo_credito(loan, STATE['is_prazo_opt'])
-    registos_eff = STATE['upfront_registos'] * (1.0 - (STATE['youth_share'] if price <= STATE['THRESH'] else 0.0))
-    upfront_total = registos_eff + STATE['upfront_outros']
+def owning_monthly_total(price: float, state: dict = STATE) -> tuple[float, dict]:
+    vpt = (state['vpt_ratio'] * price) if state['vpt_value'] is None else state['vpt_value']
+    loan = state['ltv'] * price
+    imt_total  = compute_imt(price, state['regime'], state['territorio'])
+    imt_thresh = compute_imt(min(price, state['THRESH']), state['regime'], state['territorio'])
+    imt_due = max(0.0, imt_total - state['youth_share'] * imt_thresh)
+    q = min(price, state['THRESH'])
+    is_compra = 0.008 * (price - state['youth_share'] * q)
+    is_credito = imposto_selo_credito(loan, state['is_prazo_opt'])
+    registos_eff = state['upfront_registos'] * (1.0 - (state['youth_share'] if price <= state['THRESH'] else 0.0))
+    upfront_total = registos_eff + state['upfront_outros']
 
-    m = max(1, int(round(STATE['horizon'] * 12)))
-    cap_month   = (STATE['cap_rate']   * price) / 12.0
-    maint_month = (STATE['maint_rate'] * price) / 12.0
-    imi_month   = (STATE['imi_rate']   * vpt)   / 12.0
-    condo_ins   = float(STATE['condo_month']) + float(STATE['ins_month'])
+    m = max(1, int(round(state['horizon'] * 12)))
+    cap_month   = (state['cap_rate']   * price) / 12.0
+    maint_month = (state['maint_rate'] * price) / 12.0
+    imi_month   = (state['imi_rate']   * vpt)   / 12.0
+    condo_ins   = float(state['condo_month']) + float(state['ins_month'])
     upfront_m   = (upfront_total + imt_due + is_compra + is_credito) / m
-    sell_m      = (STATE['sell_rate'] * price) / m
+    sell_m      = (state['sell_rate'] * price) / m
 
     irrec = cap_month + maint_month + imi_month + condo_ins + upfront_m + sell_m
-    total = irrec + STATE['buy_utils_month'] + STATE['commute_buy']
+    total = irrec + state['buy_utils_month'] + state['commute_buy']
     breakdown = {
         "irrec": irrec,
         "imt": imt_due,
@@ -256,9 +263,9 @@ def owning_monthly_total(price: float) -> tuple[float, dict]:
         "is_credito": is_credito,
         "vpt": vpt,
         "upfront_registos_eff": registos_eff,
-        "upfront_outros": STATE['upfront_outros'],
-        "utils_buy": STATE['buy_utils_month'],
-        "commute_buy": STATE['commute_buy'],
+        "upfront_outros": state['upfront_outros'],
+        "utils_buy": state['buy_utils_month'],
+        "commute_buy": state['commute_buy'],
     }
     return total, breakdown
 
@@ -297,6 +304,7 @@ def solve_price_pulp(
     sell_rate: float,
     buy_utils_month: float,
     commute_buy_month: float,
+    commute_rent_month: float,
     youth_share: float,
     THRESH: float,
     p_min: float = 10_000.0,
@@ -310,8 +318,15 @@ def solve_price_pulp(
     else:
         a += (imi_rate * float(vpt_ratio)) / 12.0
     const += float(condo_month) + float(ins_month)
-    const += float(buy_utils_month) + float(commute_buy_month)
+    const += float(buy_utils_month) + float(commute_buy_month) - float(commute_rent_month)
     const += float(upfront_outros) / float(months)
+
+    # custo minimo possivel (P=0) incluindo registos sem reducao total do regime jovem
+    registos_min = (upfront_registos * (1.0 - youth_share)) / float(months)
+    min_lhs = const + registos_min
+    if min_lhs > target_monthly_cost:
+        # mesmo pagando zero no imovel, os custos de comprar excedem o alvo de alugar
+        return 0.0
 
     if is_prazo_opt == ">=5y":
         credit_is_rate = 0.006
@@ -350,7 +365,8 @@ def solve_price_pulp(
 
 # ========= Resolver (P*) =========
 P_star = solve_price_pulp(
-    target_monthly_cost=rent_avg_total,   # media do custo de alugar
+    # usamos a media de alugar sem deslocamento; o commute entra como diferenca no solver
+    target_monthly_cost=rent_avg_total_base,
     months=months,
     cap_rate=cap_rate,
     maint_rate=maint_rate,
@@ -368,15 +384,24 @@ P_star = solve_price_pulp(
     sell_rate=sell_rate,
     buy_utils_month=buy_utils_month,
     commute_buy_month=commute_buy,
+    commute_rent_month=commute_rent,
     youth_share=youth_share,
     THRESH=THRESH,
 )
 
+if P_star <= 0.0:
+    st.error("Com o deslocamento informado, comprar fica sempre mais caro que alugar, mesmo pagando zero pelo imóvel.")
+
 own_tot_fair, br_fair = owning_monthly_total(P_star)
 own_tot_market, br_market = owning_monthly_total(P_market)
 
-irrec_fair_m = br_fair["irrec"] 
-irrec_mkt_m  = br_market["irrec"] 
+# avaliacao da taxa de esforco
+max_effort_month = income_month * effort_pct / 100.0
+effort_rent_pct   = (rent_total / income_month * 100.0) if income_month > 0 else float("inf")
+effort_market_pct = (own_tot_market / income_month * 100.0) if income_month > 0 else float("inf")
+
+irrec_fair_m = br_fair["irrec"]
+irrec_mkt_m  = br_market["irrec"]
 # ========= Mercado vs Justo (futuro vs futuro) =========
 g = prop_app_rate_pct / 100.0
 F = (1.0 + g) ** horizon
@@ -497,12 +522,134 @@ st.caption(
     "artificialmente o resultado. Se quiseres ignorar 'barganhas', aplica max(0, ·)."
 )
 
+st.divider()
+st.subheader("Esforço financeiro")
+st.metric("Custo mensal atual do aluguel", f"{rent_total:,.0f}".replace(",", " "))
+st.metric("Taxa de esforço (aluguel)", f"{effort_rent_pct:.1f}%")
+st.metric("Custo mensal estimado da compra", f"{own_tot_market:,.0f}".replace(",", " "))
+st.metric("Taxa de esforço (compra, mercado)", f"{effort_market_pct:.1f}%")
+st.metric("Limite mensal pela taxa de esforço", f"{max_effort_month:,.0f}".replace(",", " "))
+if own_tot_market > max_effort_month:
+    st.warning("Custo mensal excede a taxa de esforço definida.")
+
 with st.expander("Notas"):
     st.markdown(
         """
-        • P* nao inclui valorizacao do imovel na reta de custos; a apreciacao e aplicada apos resolver o preco justo.  
-        • 'Custo extra de uso' considera apenas o excesso de possuir vs alugar (se for menor, nao conta como credito aqui).  
-        • mis_future = mis_today · (1+g)^T, garantindo consistencia temporal.  
+        • P* nao inclui valorizacao do imovel na reta de custos; a apreciacao e aplicada apos resolver o preco justo.
+        • 'Custo extra de uso' considera apenas o excesso de possuir vs alugar (se for menor, nao conta como credito aqui).
+        • mis_future = mis_today · (1+g)^T, garantindo consistencia temporal.
         • Evite dupla contagem: custos de venda ja estao na linha de custos irrecuperaveis; nao subtraia/ some novamente no patrimonio.
         """
     )
+
+st.divider()
+st.subheader("Resumo das considerações adotadas")
+summary_lines = [
+    f"Área útil: {area:.0f} m²",
+    f"Renda média: € {rent_per_m2:.2f}/m²/mês",
+    f"Preço de compra de mercado: € {buy_per_m2_market:.0f}/m²",
+    f"Horizonte: {horizon:.1f} anos",
+    f"Valorização da renda: {rent_app_rate_pct:.2f}% a.a.",
+    f"Valorização do imóvel: {prop_app_rate_pct:.2f}% a.a.",
+    f"Taxa do crédito: {loan_rate_pct:.2f}%",
+    f"Retorno alternativo: {opp_return_pct:.2f}%",
+    f"LTV: {ltv*100:.0f}%",
+    f"Renda do agregado: € {income_month:,.0f}/mês",
+    f"Taxa de esforço máx.: {effort_pct:.1f}% (≈ € {max_effort_month:,.0f}/mês)",
+]
+summary_text = "\n".join(summary_lines)
+st.text_area("Resumo", summary_text, height=220)
+
+st.divider()
+st.subheader("Cenários alternativos")
+
+def calc_net(rent_per_m2_v, rent_app_rate_pct_v, buy_per_m2_market_v, loan_rate_pct_v, opp_return_pct_v, ltv_v):
+    rent_month_s = rent_per_m2_v * area
+    commute_rent_s = commute_rent
+    commute_buy_s = commute_buy
+    rent_app_rate_s = rent_app_rate_pct_v / 100.0
+    if abs(rent_app_rate_s) < 1e-12:
+        rent_avg_rent_component_s = rent_month_s
+    else:
+        r_m = (1.0 + rent_app_rate_s) ** (1.0/12.0)
+        rent_avg_rent_component_s = rent_month_s * (r_m**months - 1.0) / ((r_m - 1.0) * months)
+    rent_avg_total_base_s = rent_avg_rent_component_s + renter_ins_month + rent_utils_month
+
+    P_market_s = buy_per_m2_market_v * area
+    cap_rate_s = ltv_v * (loan_rate_pct_v/100.0) + (1.0 - ltv_v) * (opp_return_pct_v/100.0) if auto_cap else cap_rate
+
+    state_s = STATE.copy()
+    state_s.update({"ltv": ltv_v, "cap_rate": cap_rate_s, "commute_buy": commute_buy_s})
+
+    P_star_s = solve_price_pulp(
+        target_monthly_cost=rent_avg_total_base_s,
+        months=months,
+        cap_rate=cap_rate_s,
+        maint_rate=maint_rate,
+        imi_rate=imi_rate,
+        vpt_ratio=(vpt_ratio if vpt_value is None else None),
+        vpt_value_fixed=(None if vpt_value is None else vpt_value),
+        condo_month=condo_month,
+        ins_month=ins_month,
+        upfront_registos=upfront_registos,
+        upfront_outros=upfront_outros,
+        territorio=territorio,
+        regime=regime,
+        is_prazo_opt=is_prazo_opt,
+        ltv=ltv_v,
+        sell_rate=sell_rate,
+        buy_utils_month=buy_utils_month,
+        commute_buy_month=commute_buy_s,
+        commute_rent_month=commute_rent_s,
+        youth_share=youth_share,
+        THRESH=THRESH,
+    )
+
+    own_tot_fair_s, br_fair_s = owning_monthly_total(P_star_s, state_s)
+    own_tot_market_s, br_market_s = owning_monthly_total(P_market_s, state_s)
+    irrec_fair_m_s = br_fair_s["irrec"]
+    irrec_mkt_m_s = br_market_s["irrec"]
+
+    g_s = prop_app_rate_pct / 100.0
+    F_s = (1.0 + g_s) ** horizon
+    asset_gain_base_s = P_star_s * (F_s - 1.0)
+    extra_irrec_month_s = irrec_mkt_m_s - irrec_fair_m_s
+    r_op_m_s = (opp_return_pct_v / 100.0) / 12.0
+    if r_op_m_s > 0:
+        ann_fv_s = ((1.0 + r_op_m_s) ** months - 1.0) / r_op_m_s
+    else:
+        ann_fv_s = months
+    extra_irrec_FV_s = extra_irrec_month_s * ann_fv_s
+    return asset_gain_base_s - extra_irrec_FV_s
+
+scenario_rows = []
+
+for val in [rent_app_rate_pct - 1, rent_app_rate_pct, rent_app_rate_pct + 1]:
+    net = calc_net(rent_per_m2, val, buy_per_m2_market, loan_rate_pct, opp_return_pct, ltv)
+    scenario_rows.append({"Variavel": "crescimento da renda", "Valor": f"{val:.2f}%", "Liquido": round(net,2)})
+
+for val in [loan_rate_pct - 1, loan_rate_pct, loan_rate_pct + 1]:
+    val_adj = max(0.0, val)
+    net = calc_net(rent_per_m2, rent_app_rate_pct, buy_per_m2_market, val_adj, opp_return_pct, ltv)
+    scenario_rows.append({"Variavel": "taxa de financiamento", "Valor": f"{val_adj:.2f}%", "Liquido": round(net,2)})
+
+for val in [opp_return_pct - 1, opp_return_pct, opp_return_pct + 1]:
+    val_adj = max(0.0, val)
+    net = calc_net(rent_per_m2, rent_app_rate_pct, buy_per_m2_market, loan_rate_pct, val_adj, ltv)
+    scenario_rows.append({"Variavel": "retorno alternativo", "Valor": f"{val_adj:.2f}%", "Liquido": round(net,2)})
+
+for val in [max(0.0, ltv*100 - 5)/100, ltv, min(1.0, ltv*100 + 5)/100]:
+    net = calc_net(rent_per_m2, rent_app_rate_pct, buy_per_m2_market, loan_rate_pct, opp_return_pct, val)
+    scenario_rows.append({"Variavel": "LTV", "Valor": f"{val*100:.0f}%", "Liquido": round(net,2)})
+
+for val in [buy_per_m2_market * 0.9, buy_per_m2_market, buy_per_m2_market * 1.1]:
+    net = calc_net(rent_per_m2, rent_app_rate_pct, val, loan_rate_pct, opp_return_pct, ltv)
+    scenario_rows.append({"Variavel": "preço de mercado", "Valor": f"{val:.0f}/m²", "Liquido": round(net,2)})
+
+for val in [max(0.0, rent_per_m2 - 1), rent_per_m2, rent_per_m2 + 1]:
+    net = calc_net(val, rent_app_rate_pct, buy_per_m2_market, loan_rate_pct, opp_return_pct, ltv)
+    scenario_rows.append({"Variavel": "renda média", "Valor": f"{val:.2f}/m²", "Liquido": round(net,2)})
+
+scenario_df = pd.DataFrame(scenario_rows)
+st.dataframe(scenario_df, hide_index=True, use_container_width=True)
+st.download_button("Copiar resultados", scenario_df.to_csv(index=False), "cenarios.csv", "text/csv")
