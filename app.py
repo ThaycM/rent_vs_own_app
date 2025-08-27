@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import streamlit as st
 import numpy as np
 import pandas as pd
+from pma_d import PMADParams, compute_pma_d
 
 # ========= MILP solver =========
 try:
@@ -183,6 +184,17 @@ with st.sidebar:
     st.subheader("Valorizacao do imovel (aplicada APOS obter P*)")
     prop_app_rate_pct = st.number_input("Valorizacao anual esperada do imovel (%)", -10.0, value=0.0, step=0.25)
 
+    st.divider()
+    st.header("PMA-D")
+    ano_construcao = st.number_input("Ano de construcao", 0, value=2000, step=1)
+    capex_manutencao_previsto = st.number_input("CAPEX manutencao previsto (EUR)", 0.0, value=0.0, step=1000.0)
+    wacc_pct = st.number_input("WACC (%)", 0.0, value=5.0, step=0.25)
+    horizonte_capex_anos = st.number_input("Horizonte CAPEX (anos)", 1, value=10, step=1)
+    vida_util_estrutura_anos = st.number_input("Vida util da estrutura (anos)", 1, value=60, step=1)
+    quota_estrutura_no_preco = st.number_input("Quota da estrutura no preco (%)", 0.0, value=70.0, step=1.0) / 100.0
+    classe_ref = st.selectbox("Classe energetica de referencia", ["G","F","E","D","C","B","A","A+"], index=4)
+    premio_por_salto_classe = st.number_input("Premio por salto de classe (%)", 0.0, value=7.5, step=0.1) / 100.0
+
 # ---- custo de capital efetivo (sem valorizacao do imovel) ----
 if auto_cap:
     cap_rate = ltv * (loan_rate_pct/100.0) + (1.0 - ltv) * (opp_return_pct/100.0)
@@ -210,6 +222,28 @@ rent_avg_total = rent_avg_total_base + commute_rent
 
 # Preco de mercado
 P_market = buy_per_m2_market * area
+
+params_pma = PMADParams(
+    vida_util_estrutura_anos=int(vida_util_estrutura_anos),
+    quota_estrutura_no_preco=quota_estrutura_no_preco,
+    classe_ref=classe_ref,
+    premio_por_salto_classe=premio_por_salto_classe,
+)
+
+try:
+    pma_res = compute_pma_d(
+        preco_mercado=P_market,
+        area_m2=area,
+        ano_construcao=int(ano_construcao) if ano_construcao > 0 else None,
+        classe_energetica=energy_class,
+        capex_manutencao_previsto=capex_manutencao_previsto,
+        wacc=wacc_pct / 100.0,
+        horizonte_capex_anos=int(horizonte_capex_anos),
+        params=params_pma,
+    )
+except ValueError as e:
+    st.error(f"PMA-D: {e}")
+    pma_res = None
 
 # ========= Owning total =========
 STATE = dict(
@@ -461,6 +495,18 @@ with cR:
     st.subheader("Preco justo para COMPRAR")
     st.metric("Preco maximo justo HOJE (EUR)", f"{P_star:,.0f}".replace(","," "))
     st.metric("Preco de mercado hoje (EUR)", f"{P_market:,.0f}".replace(","," "))
+    if pma_res:
+        st.metric("PMA-D (EUR)", f"{pma_res['pma_d']:,.0f}".replace(","," "))
+        st.metric("PMA-D (EUR/m²)", f"{pma_res['pma_d_m2']:,.0f}".replace(","," "))
+        st.metric(
+            "Desconto recomendado",
+            f"{pma_res['desconto_pct']*100:.1f}% ({pma_res['desconto_abs']:,.0f})".replace(",", " "),
+        )
+        st.caption(pma_res["badge"])
+        if pma_res["depreciacao_pct"] is None:
+            st.warning("Ano de construcao ausente: dados insuficientes para depreciacao.")
+        if pma_res["delta_passos"] is None:
+            st.info("Classe energetica ausente: estimativa neutra.")
     st.caption("Definicao: custo mensal medio de possuir = custo mensal medio de alugar (no horizonte).")
 
     st.write("**Decomposicao ao preco justo (mensal)**")
