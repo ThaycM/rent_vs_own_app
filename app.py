@@ -397,7 +397,9 @@ own_tot_market, br_market = owning_monthly_total(P_market)
 
 # avaliacao da taxa de esforco
 max_effort_month = income_month * effort_pct / 100.0
+
 effort_rent_pct   = (rent_total / income_month * 100.0) if income_month > 0 else float("inf")
+
 effort_market_pct = (own_tot_market / income_month * 100.0) if income_month > 0 else float("inf")
 
 irrec_fair_m = br_fair["irrec"]
@@ -524,6 +526,7 @@ st.caption(
 
 st.divider()
 st.subheader("Esforço financeiro")
+
 st.metric("Custo mensal atual do aluguel", f"{rent_total:,.0f}".replace(",", " "))
 st.metric("Taxa de esforço (aluguel)", f"{effort_rent_pct:.1f}%")
 st.metric("Custo mensal estimado da compra", f"{own_tot_market:,.0f}".replace(",", " "))
