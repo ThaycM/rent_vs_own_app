@@ -605,6 +605,15 @@ summary_lines = [
     f"LTV: {ltv*100:.0f}%",
     f"Renda do agregado: € {income_month:,.0f}/mês",
     f"Taxa de esforço máx.: {effort_pct:.1f}% (≈ € {max_effort_month:,.0f}/mês)",
+    f"Renda total (mês 1): € {rent_total:,.0f}",
+    f"Renda média (horizonte): € {rent_avg_total:,.0f}",
+    f"Custo possuir (P*): € {own_tot_fair:,.0f}/mês",
+    f"Custo possuir (mercado): € {own_tot_market:,.0f}/mês",
+    f"Preço justo hoje (P*): € {P_star:,.0f}",
+    f"Preço de mercado hoje: € {P_market:,.0f}",
+    f"Líquido esperado: € {net_user:,.0f}",
+    f"Taxa esforço alugar: {effort_rent_pct:.1f}%",
+    f"Taxa esforço compra mercado: {effort_market_pct:.1f}%",
 ]
 summary_text = "\n".join(summary_lines)
 st.text_area("Resumo", summary_text, height=220)
@@ -612,7 +621,7 @@ st.text_area("Resumo", summary_text, height=220)
 st.divider()
 st.subheader("Cenários alternativos")
 
-def calc_net(rent_per_m2_v, rent_app_rate_pct_v, buy_per_m2_market_v, loan_rate_pct_v, opp_return_pct_v, ltv_v):
+def calc_net(rent_per_m2_v, rent_app_rate_pct_v, buy_per_m2_market_v, loan_rate_pct_v, opp_return_pct_v, ltv_v, prop_app_rate_pct_v):
     rent_month_s = rent_per_m2_v * area
     commute_rent_s = commute_rent
     commute_buy_s = commute_buy
@@ -659,7 +668,7 @@ def calc_net(rent_per_m2_v, rent_app_rate_pct_v, buy_per_m2_market_v, loan_rate_
     irrec_fair_m_s = br_fair_s["irrec"]
     irrec_mkt_m_s = br_market_s["irrec"]
 
-    g_s = prop_app_rate_pct / 100.0
+    g_s = prop_app_rate_pct_v / 100.0
     F_s = (1.0 + g_s) ** horizon
     asset_gain_base_s = P_star_s * (F_s - 1.0)
     extra_irrec_month_s = irrec_mkt_m_s - irrec_fair_m_s
@@ -674,29 +683,33 @@ def calc_net(rent_per_m2_v, rent_app_rate_pct_v, buy_per_m2_market_v, loan_rate_
 scenario_rows = []
 
 for val in [rent_app_rate_pct - 1, rent_app_rate_pct, rent_app_rate_pct + 1]:
-    net = calc_net(rent_per_m2, val, buy_per_m2_market, loan_rate_pct, opp_return_pct, ltv)
+    net = calc_net(rent_per_m2, val, buy_per_m2_market, loan_rate_pct, opp_return_pct, ltv, prop_app_rate_pct)
     scenario_rows.append({"Variavel": "crescimento da renda", "Valor": f"{val:.2f}%", "Liquido": round(net,2)})
+
+for val in [prop_app_rate_pct - 1, prop_app_rate_pct, prop_app_rate_pct + 1]:
+    net = calc_net(rent_per_m2, rent_app_rate_pct, buy_per_m2_market, loan_rate_pct, opp_return_pct, ltv, val)
+    scenario_rows.append({"Variavel": "valorização do imóvel", "Valor": f"{val:.2f}%", "Liquido": round(net,2)})
 
 for val in [loan_rate_pct - 1, loan_rate_pct, loan_rate_pct + 1]:
     val_adj = max(0.0, val)
-    net = calc_net(rent_per_m2, rent_app_rate_pct, buy_per_m2_market, val_adj, opp_return_pct, ltv)
+    net = calc_net(rent_per_m2, rent_app_rate_pct, buy_per_m2_market, val_adj, opp_return_pct, ltv, prop_app_rate_pct)
     scenario_rows.append({"Variavel": "taxa de financiamento", "Valor": f"{val_adj:.2f}%", "Liquido": round(net,2)})
 
 for val in [opp_return_pct - 1, opp_return_pct, opp_return_pct + 1]:
     val_adj = max(0.0, val)
-    net = calc_net(rent_per_m2, rent_app_rate_pct, buy_per_m2_market, loan_rate_pct, val_adj, ltv)
+    net = calc_net(rent_per_m2, rent_app_rate_pct, buy_per_m2_market, loan_rate_pct, val_adj, ltv, prop_app_rate_pct)
     scenario_rows.append({"Variavel": "retorno alternativo", "Valor": f"{val_adj:.2f}%", "Liquido": round(net,2)})
 
 for val in [max(0.0, ltv*100 - 5)/100, ltv, min(1.0, ltv*100 + 5)/100]:
-    net = calc_net(rent_per_m2, rent_app_rate_pct, buy_per_m2_market, loan_rate_pct, opp_return_pct, val)
+    net = calc_net(rent_per_m2, rent_app_rate_pct, buy_per_m2_market, loan_rate_pct, opp_return_pct, val, prop_app_rate_pct)
     scenario_rows.append({"Variavel": "LTV", "Valor": f"{val*100:.0f}%", "Liquido": round(net,2)})
 
 for val in [buy_per_m2_market * 0.9, buy_per_m2_market, buy_per_m2_market * 1.1]:
-    net = calc_net(rent_per_m2, rent_app_rate_pct, val, loan_rate_pct, opp_return_pct, ltv)
+    net = calc_net(rent_per_m2, rent_app_rate_pct, val, loan_rate_pct, opp_return_pct, ltv, prop_app_rate_pct)
     scenario_rows.append({"Variavel": "preço de mercado", "Valor": f"{val:.0f}/m²", "Liquido": round(net,2)})
 
 for val in [max(0.0, rent_per_m2 - 1), rent_per_m2, rent_per_m2 + 1]:
-    net = calc_net(val, rent_app_rate_pct, buy_per_m2_market, loan_rate_pct, opp_return_pct, ltv)
+    net = calc_net(val, rent_app_rate_pct, buy_per_m2_market, loan_rate_pct, opp_return_pct, ltv, prop_app_rate_pct)
     scenario_rows.append({"Variavel": "renda média", "Valor": f"{val:.2f}/m²", "Liquido": round(net,2)})
 
 scenario_df = pd.DataFrame(scenario_rows)
